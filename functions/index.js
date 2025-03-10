@@ -4,6 +4,9 @@ const axios = require("axios");
 // Load OpenAI API key from Firebase Config
 const OPENAI_API_KEY = functions.config().openai.key;
 
+// Храним историю сообщений в памяти (если нет Firebase для этого)
+const conversationHistory = [];
+
 exports.chatWithGPT = functions.https.onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, POST");
@@ -17,31 +20,49 @@ exports.chatWithGPT = functions.https.onRequest(async (req, res) => {
     }
 
     const userMessage = req.body.message;
-    console.log("Sending request to OpenAI with message:", userMessage);
+    console.log("User message:", userMessage);
 
-    // Запрос к OpenAI API с таймаутом 10 секунд
+    // Добавляем сообщение пользователя в историю
+    conversationHistory.push({role: "user", content: userMessage});
+
+    // Ограничиваем длину истории (например, 10 последних сообщений)
+    if (conversationHistory.length > 10) {
+      conversationHistory.shift(); // Удаляем самое старое сообщение
+    }
+
+    // Запрос к OpenAI API
     const response = await axios.post(
         "https://api.openai.com/v1/chat/completions",
         {
           model: "gpt-4-turbo",
           messages: [
-            {role: "system", content: "You are a helpful assistant."},
-            {role: "user", content: userMessage},
+            {
+              role: "system",
+              content: "Ты персональный AI-ассистент. Помогаешь пользователю в программировании, личной продуктивности и других вопросах. Отвечай понятно, но с деталями. Если нужно код — объясни, прежде чем давать пример.",
+            },
+            ...conversationHistory, // Добавляем историю
           ],
           max_tokens: 1000,
+          temperature: 0.8, // Чуть более креативные ответы
+          top_p: 0.9,
+          frequency_penalty: 0.2,
+          presence_penalty: 0.4,
         },
         {
           headers: {
             "Authorization": `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
-          timeout: 40000, // Таймаут 10 секунд
+          timeout: 40000,
         },
     );
 
     console.log("Full OpenAI Response:", JSON.stringify(response.data, null, 2));
 
     const fullResponse = response.data.choices[0].message.content;
+
+    // Добавляем ответ бота в историю диалога
+    conversationHistory.push({role: "assistant", content: fullResponse});
 
     // Разбиваем длинный текст на части, если он слишком большой
     const chunkSize = 500;
@@ -61,5 +82,3 @@ exports.chatWithGPT = functions.https.onRequest(async (req, res) => {
     });
   }
 });
-
-
